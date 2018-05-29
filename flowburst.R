@@ -8,39 +8,37 @@ library( tidyverse )
 ## Main driver of the code in this file
 main <- function()
 {
-    fn <- "alpha_1.0%_vectors.csv"
-
     ## ########## ##
     ## Pre-define ##
     ## ########## ##
-    
+
+    ## Name of file containing the data
+    fn <- "alpha_1.0%_vectors.csv"
+
     ## Markers
     vMarkers <- c( "B220", "CD11b", "CD11c", "CD3e", "CD4",
                   "CD45", "CD49b", "CD8a", "F480", "Ly6C", "Ly6G" )
 
     ## Canonical cell states
-    vCanonical <- c( "B", "CD8aposT", "ISPT", "CD4posT", "NK", "Non-immune",
-                    "Precursor", "Mac", "Mono", "DPT", "DNT", "PMN", "DC" )
-
-    ## Mapping to short labels
-    mClean <- c( "CD8aposT" = "CD8T", "CD4posT" = "CD4T", "CD8aposISPT" = "ISPT" )
+    vCanonical <- c( "B", "CD8T", "ISPT", "CD4T", "NK", "Precursor",
+                    "Mac", "Mono", "DPT", "DNT", "PMN", "DC", "Eo", "LTi" )
 
     ## Order on the figure (to avoid label overlap)
     ## Must use "clean"/short labels from mClean
-    vOrder <- c( "B", "CD4T", "DC", "CD8T", "ISPT", "Precursor", "DNT",
-                "NK", "Mono", "Mac", "PMN", "DPT" )
+    vOrder <- c( "B", "CD4T", "DC", "CD8T", "ISPT", "Precursor", "DPT",
+                "NK", "Mono", "Mac", "PMN", "DNT", "LTi", "Eo" )
 
     ## ######## ##
     ## Pipeline ##
     ## ######## ##
-    
+
     ## Load cell type definitions and annotate each cell type with the corresponding
     ##  canonical label
-    CT <- loadCellTypes( fn, vMarkers, vCanonical, mClean )
+    CT <- loadCellTypes( fn, vMarkers, vCanonical )
 
     ## Identify the set of markers to display next to each cell type
     MK <- getMarkers( CT )
-    
+
     ## Prepare node data for the sunburst plot
     SB <- prepareNodeData( CT, vOrder ) %>% genMarkerLbls( MK )
 
@@ -74,6 +72,14 @@ loadCellTypes <- function( fn, vMarkers, vCanonical, mClean = NULL )
     X <- read_csv( fn, col_types = cols() ) %>%
         select( cell_type, one_of(vMarkers) )
 
+    ## Ensure that there's an entry for each canonical
+    if( !all( vCanonical %in% X$cell_type ) )
+    {
+        msg <- str_c( "The following canonical types are not in the file: ",
+                     setdiff( vCanonical, X$cell_type ) )
+        stop( msg )
+    }
+
     ## Match up cell types to their canonical state names
     X$Canonical <- set_names( vCanonical ) %>% map( ~grep(str_c(.x,"$"), X$cell_type) ) %>%
         reshape2::melt() %>% arrange( value ) %>% .$L1
@@ -83,8 +89,7 @@ loadCellTypes <- function( fn, vMarkers, vCanonical, mClean = NULL )
     ## Remove non-immune from consideration because all markers are 0
     X %>% mutate( cell_type = partialMap( cell_type, mClean ),
                  Canonical = partialMap( Canonical, mClean ) ) %>%
-        select( Canonical, cell_type, everything() ) %>%
-        filter( Canonical != "Non-immune" )
+        select( Canonical, cell_type, everything() )
 }
 
 ## Appends a suffix to each element of v
@@ -100,9 +105,8 @@ str_cc <- function( v, sfx )
 ##   from other cell types, for which only the difference in markers is shown
 getMarkers <- function( CT )
 {
-    CT %>% filter( Canonical != "Non-immune" ) %>%
-        ## Retrieve the list of markers for each cell type
-        group_by( Canonical, cell_type ) %>%
+    ## Retrieve the list of markers for each cell type
+    CT %>% group_by( Canonical, cell_type ) %>%
         do( ctm = colnames(.)[.==1] ) %>% ungroup() %>%
         ## Annotate with the corresponding canonical markers
         group_by( Canonical ) %>%
@@ -134,7 +138,7 @@ prepareNodeData <- function( CT, vOrder )
     tf <- tempfile()
     XX %>% write_csv( tf, na="" )
     sb <- sunburst_data( tf, type = "node_parent", sep=",", node_attributes = "Canonical" )
-    
+
     ## Adjust rectangle height
     sb$rects <- sb$rects %>% mutate( ymin = ifelse( ymin == min(ymin), ymin + 0.5, ymin ),
                                     ymax = ifelse( ymax == max(ymax), ymax - 0.75, ymax ) )
@@ -160,7 +164,7 @@ genMarkerLbls <- function( SB, MK )
         inner_join( MK ) %>%
         mutate( y = ifelse( cell_type == "DC", max(y) + .425, max(y) + .7 ) ) %>%
         group_by( cell_type ) %>% mutate( y = y + (1:length(y) - 1) * 0.125 ) %>% ungroup
-    
+
     ## Create node annotations
     SB$NN <- SB$node_labels %>% rename( cell_type = label ) %>%
         mutate_at( vars(cell_type, Canonical), as.character ) %>%
@@ -196,7 +200,7 @@ plotFlowburst <- function( SB, fnOut = "cell_types.pdf" )
         scale_y_continuous( limits=c(-2.9, -0 ), expand=c(0,-0.55) ) +
         theme( plot.margin = unit( c(0,0,0,0), "mm" ),
               axis.title.x = element_blank(), axis.title.y = element_blank() )
-    
+
     ggsave( fnOut, gg, width=8, height=8 )
 }
 
